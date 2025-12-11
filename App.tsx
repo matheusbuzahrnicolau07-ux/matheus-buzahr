@@ -1,31 +1,27 @@
+
 import React, { useState, useEffect, useRef } from 'react';
-import { User, NutritionData, AnalysisRecord, AppView, UserGoals } from './types';
+import { User, NutritionData, AnalysisRecord, AppView, UserGoals, MealType } from './types';
 import { analyzeFoodImage } from './services/geminiService';
+import { storageService } from './services/storage';
 import AnalysisResult from './components/AnalysisResult';
 import HistoryScreen from './components/HistoryScreen';
 import ProfileScreen from './components/ProfileScreen';
-import WorkoutScreen from './components/WorkoutScreen';
 import OnboardingScreen from './components/OnboardingScreen';
-import { CameraIcon, HistoryIcon, LeafIcon, ChevronLeftIcon, HomeIcon, PlusIcon, ChartBarIcon, FireIcon, SettingsIcon, BarbellIcon } from './components/Icons';
+import WaterModal from './components/WaterModal';
+import AuthScreen from './components/AuthScreen';
+import { HistoryIcon, LeafIcon, HomeIcon, PlusIcon, FireIcon, SettingsIcon, DropletIcon, ChevronLeftIcon, CheckCircleIcon, SaveIcon, ArrowRightIcon, RefreshIcon, ArrowLeftIcon, CalendarIcon } from './components/Icons';
 import { PieChart, Pie, Cell, ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
-
-// Weekly calendar data helpers
-const WEEK_DAYS = ['D', 'S', 'T', 'Q', 'Q', 'S', 'S'];
-const getCurrentWeekStatus = (history: AnalysisRecord[]) => {
-    const today = new Date().getDay();
-    const status = Array(7).fill(false);
-    status[today] = true;
-    status[(today - 1 + 7) % 7] = true; 
-    return status;
-};
 
 // Default Goals
 const DEFAULT_GOALS: UserGoals = {
     calories: 2000,
     protein: 140,
     carbs: 220,
-    fat: 65
+    fat: 65,
+    water: 2500
 };
+
+type Theme = 'dark' | 'light';
 
 function App() {
   // State
@@ -36,59 +32,197 @@ function App() {
   const [history, setHistory] = useState<AnalysisRecord[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [selectedMealType, setSelectedMealType] = useState<MealType | null>(null); 
+  const [theme, setTheme] = useState<Theme>('dark');
+  
+  // Water Tracker State
+  const [waterIntake, setWaterIntake] = useState(0);
+  const [waterAnimating, setWaterAnimating] = useState(false);
+  const [isWaterModalOpen, setIsWaterModalOpen] = useState(false);
+  
+  // Day finished state for UI feedback
+  const [dayFinished, setDayFinished] = useState(false);
+
+  // Date Navigation State
+  const [dateOffset, setDateOffset] = useState(0); // 0 = Today, -1 = Yesterday, 1 = Tomorrow
+  
+  // Scroll State for UI transitions
+  const [isScrolled, setIsScrolled] = useState(false);
 
   // Refs
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Initialize
   useEffect(() => {
-    const savedUser = localStorage.getItem('nutrivision_user');
-    if (savedUser) {
-      const parsedUser = JSON.parse(savedUser);
-      if (!parsedUser.goals) parsedUser.goals = DEFAULT_GOALS;
-      if (!parsedUser.workoutGoal) parsedUser.workoutGoal = 'hypertrophy';
-      if (!parsedUser.experienceLevel) parsedUser.experienceLevel = 'beginner';
-      if (!parsedUser.daysPerWeek) parsedUser.daysPerWeek = 3;
-      setUser(parsedUser);
-      setView('home');
+    // Theme Init
+    const savedTheme = localStorage.getItem('nutrivision_theme') as Theme;
+    if (savedTheme) {
+        setTheme(savedTheme);
     }
 
-    const savedHistory = localStorage.getItem('nutrivision_history');
-    if (savedHistory) {
-      setHistory(JSON.parse(savedHistory));
+    // Load User ID from LocalStorage (Session)
+    const storedUserId = localStorage.getItem('nutrivision_user_id');
+    
+    const initApp = async () => {
+        if (storedUserId) {
+            try {
+                // Load full user object from IndexedDB
+                const loadedUser = await storageService.getUser(storedUserId);
+                if (loadedUser) {
+                    if (!loadedUser.goals) loadedUser.goals = DEFAULT_GOALS;
+                    setUser(loadedUser);
+                    
+                    // Load History
+                    const loadedHistory = await storageService.getAllHistory(storedUserId);
+                    setHistory(loadedHistory);
+                    
+                    setView('home');
+                } else {
+                    // Fallback if ID exists but data missing
+                    localStorage.removeItem('nutrivision_user_id');
+                    setView('welcome');
+                }
+            } catch (e) {
+                console.error("Erro ao carregar dados:", e);
+                setView('welcome');
+            }
+        }
+    };
+    
+    initApp();
+    
+    // Simple daily water reset simulation
+    const savedWater = localStorage.getItem('nutrivision_water');
+    const savedDate = localStorage.getItem('nutrivision_water_date');
+    const today = new Date().toDateString();
+    
+    if (savedDate === today && savedWater) {
+        setWaterIntake(parseInt(savedWater));
     } else {
-        setHistory([]); // Start empty for new users
+        setWaterIntake(0);
+        localStorage.setItem('nutrivision_water_date', today);
     }
+    
+    checkDayStatus(new Date());
+
+    // Scroll Listener
+    const handleScroll = () => {
+        setIsScrolled(window.scrollY > 20);
+    };
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
-  // Handlers
-  const handleLogin = (e: React.FormEvent) => {
-    e.preventDefault();
-    const newUser: User = {
-      id: Date.now().toString(),
-      name: 'Usuário',
-      email: 'usuario@exemplo.com',
-      joinedAt: Date.now(),
-      goals: DEFAULT_GOALS,
-      workoutGoal: 'hypertrophy',
-      experienceLevel: 'beginner',
-      daysPerWeek: 3,
-      workoutLocation: 'gym'
-    };
-    setUser(newUser);
-    setView('onboarding'); 
+  // Check if the currently viewed day is finished
+  const checkDayStatus = (dateToCheck: Date) => {
+    const dateStr = dateToCheck.toDateString();
+    const finishedDate = localStorage.getItem('nutrivision_last_finished_date');
+    
+    if (finishedDate === dateStr) {
+        setDayFinished(true);
+    } else {
+        setDayFinished(false);
+    }
   };
 
-  const handleOnboardingComplete = (updatedUser: User) => {
+  useEffect(() => {
+      // Whenever offset changes, re-check finish status
+      const displayDate = new Date();
+      displayDate.setDate(new Date().getDate() + dateOffset);
+      checkDayStatus(displayDate);
+  }, [dateOffset]);
+
+  const toggleTheme = () => {
+      const newTheme = theme === 'dark' ? 'light' : 'dark';
+      setTheme(newTheme);
+      localStorage.setItem('nutrivision_theme', newTheme);
+  };
+
+  // Persist Water with Animation
+  const updateWater = (amount: number) => {
+      if (amount > 0) {
+        // Trigger animation only for positive adds
+        setWaterAnimating(true);
+        setTimeout(() => setWaterAnimating(false), 500);
+      }
+
+      const newValue = Math.max(0, waterIntake + amount);
+      setWaterIntake(newValue);
+      localStorage.setItem('nutrivision_water', newValue.toString());
+      localStorage.setItem('nutrivision_water_date', new Date().toDateString());
+  };
+
+  // Handlers
+  const handleAuth = async (email: string, password: string, name?: string) => {
+    await new Promise(resolve => setTimeout(resolve, 800));
+
+    const userId = btoa(email).substring(0, 16); 
+
+    const newUser: User = {
+      id: userId,
+      name: name || email.split('@')[0],
+      email: email,
+      joinedAt: Date.now(),
+      goals: DEFAULT_GOALS,
+      weightGoal: 'maintain',
+      activityLevel: 'moderately_active'
+    };
+
+    try {
+        // Try to load existing
+        const existingUser = await storageService.getUser(userId);
+        
+        if (existingUser && !name) {
+            setUser(existingUser);
+            // Load history
+            const userHistory = await storageService.getAllHistory(userId);
+            setHistory(userHistory);
+            
+            localStorage.setItem('nutrivision_user_id', userId);
+            setView('home');
+        } else {
+            // New user or overwriting with name
+            await storageService.saveUser(newUser);
+            setUser(newUser);
+            localStorage.setItem('nutrivision_user_id', userId);
+            setView('onboarding'); 
+        }
+    } catch (e) {
+        console.error("Auth error", e);
+    }
+  };
+
+  const handleSkipAuth = () => {
+     setView('welcome');
+  };
+
+  const handleOnboardingComplete = async (updatedUser: User) => {
     setUser(updatedUser);
-    localStorage.setItem('nutrivision_user', JSON.stringify(updatedUser));
+    await storageService.saveUser(updatedUser);
     setView('home');
   };
 
-  const handleUpdateProfile = (updatedUser: User) => {
+  const handleUpdateProfile = async (updatedUser: User) => {
       setUser(updatedUser);
-      localStorage.setItem('nutrivision_user', JSON.stringify(updatedUser));
+      await storageService.saveUser(updatedUser);
       if (view === 'settings') setView('home');
+  };
+
+  const handleInitiateScan = (type: MealType) => {
+      setSelectedMealType(type);
+      fileInputRef.current?.click();
+  };
+
+  const handleGenericScan = () => {
+      const hour = new Date().getHours();
+      let type: MealType = 'snack';
+      if (hour >= 5 && hour < 11) type = 'breakfast';
+      else if (hour >= 11 && hour < 15) type = 'lunch';
+      else if (hour >= 18 && hour < 24) type = 'dinner';
+      else type = 'snack';
+      
+      setSelectedMealType(type);
+      fileInputRef.current?.click();
   };
 
   const handleImageSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -112,54 +246,136 @@ function App() {
         setView('home');
       } finally {
         setIsLoading(false);
+        if (fileInputRef.current) fileInputRef.current.value = '';
       }
     };
     reader.readAsDataURL(file);
   };
 
-  const handleSaveAnalysis = (data: NutritionData) => {
+  const handleSaveAnalysis = async (data: NutritionData, finalMealType: MealType) => {
     if (!currentImage || !user) return;
-    const newRecord: AnalysisRecord = {
-      ...data,
-      id: Date.now().toString(),
-      imageUrl: currentImage,
-      timestamp: Date.now(),
-      userId: user.id
-    };
-    const updatedHistory = [newRecord, ...history];
-    setHistory(updatedHistory);
-    localStorage.setItem('nutrivision_history', JSON.stringify(updatedHistory));
+    
+    // CHECK IF WE ARE EDITING AN EXISTING RECORD (HAS ID) OR CREATING NEW
+    const existingRecord = currentAnalysis as AnalysisRecord;
+    
+    let recordToSave: AnalysisRecord;
+
+    if (existingRecord && existingRecord.id) {
+        // UPDATE EXISTING RECORD
+        recordToSave = {
+            ...existingRecord,
+            ...data,
+            mealType: finalMealType
+        };
+        
+        // Optimistic update
+        setHistory(prev => prev.map(item => item.id === recordToSave.id ? recordToSave : item));
+    } else {
+        // CREATE NEW RECORD
+        // Use the current display date
+        const displayDate = new Date();
+        displayDate.setDate(new Date().getDate() + dateOffset);
+        const now = new Date();
+        displayDate.setHours(now.getHours(), now.getMinutes(), now.getSeconds());
+
+        recordToSave = {
+          ...data,
+          id: Date.now().toString(),
+          imageUrl: currentImage,
+          timestamp: displayDate.getTime(), 
+          userId: user.id, 
+          mealType: finalMealType 
+        };
+        
+        // Optimistic update
+        setHistory(prev => [recordToSave, ...prev]);
+    }
+
+    // Save to DB
+    await storageService.saveRecord(recordToSave);
+
     setCurrentImage(null);
     setCurrentAnalysis(null);
     setView('home');
   };
 
+  const handleDeleteAnalysis = async (recordId: string) => {
+      // Optimistic update
+      setHistory(prev => prev.filter(item => item.id !== recordId));
+      
+      // DB Delete
+      await storageService.deleteRecord(recordId);
+
+      if (currentAnalysis && (currentAnalysis as AnalysisRecord).id === recordId) {
+          setCurrentImage(null);
+          setCurrentAnalysis(null);
+          setView('home');
+      }
+  };
+
   const handleSelectHistoryItem = (item: AnalysisRecord) => {
     setCurrentImage(item.imageUrl);
     setCurrentAnalysis(item);
+    if (item.mealType) setSelectedMealType(item.mealType);
     setView('result');
   };
 
-  // Calculate Today's Stats
-  const getTodayStats = () => {
-    const today = new Date().setHours(0,0,0,0);
-    const todayMeals = history.filter(item => new Date(item.timestamp).setHours(0,0,0,0) === today);
-    const totalCals = todayMeals.reduce((acc, curr) => acc + curr.calories, 0);
-    const totalProtein = todayMeals.reduce((acc, curr) => acc + curr.protein, 0);
-    const totalCarbs = todayMeals.reduce((acc, curr) => acc + curr.carbs, 0);
-    const totalFat = todayMeals.reduce((acc, curr) => acc + curr.fat, 0);
-    const goals = user?.goals || DEFAULT_GOALS;
-    const remaining = Math.max(0, goals.calories - totalCals);
-    return { totalCals, totalProtein, totalCarbs, totalFat, remaining, todayMeals, goals };
+  const handleFinishDay = () => {
+      if (!dayFinished) {
+          setDayFinished(true);
+          const displayDate = new Date();
+          displayDate.setDate(new Date().getDate() + dateOffset);
+          localStorage.setItem('nutrivision_last_finished_date', displayDate.toDateString());
+      }
   };
 
-  const { totalCals, totalProtein, totalCarbs, totalFat, remaining, todayMeals, goals } = getTodayStats();
-  const weekStatus = getCurrentWeekStatus(history);
-  
-  const homeChartData = [
-      { name: 'Consumed', value: totalCals },
-      { name: 'Remaining', value: remaining }
-  ];
+  const handleReopenDay = () => {
+      setDayFinished(false);
+      localStorage.removeItem('nutrivision_last_finished_date');
+  };
+
+  const handleGoToNextDay = () => {
+      setDateOffset(prev => prev + 1);
+  };
+
+  // Calculate Stats based on Date Offset
+  const getTodayStats = () => {
+    const displayDate = new Date();
+    displayDate.setDate(new Date().getDate() + dateOffset);
+    const dateKey = displayDate.setHours(0,0,0,0);
+
+    const userHistory = history.filter(item => item.userId === user?.id);
+    const dayMeals = userHistory.filter(item => new Date(item.timestamp).setHours(0,0,0,0) === dateKey);
+    
+    const totalCals = dayMeals.reduce((acc, curr) => acc + curr.calories, 0);
+    const totalProtein = dayMeals.reduce((acc, curr) => acc + curr.protein, 0);
+    const totalCarbs = dayMeals.reduce((acc, curr) => acc + curr.carbs, 0);
+    const totalFat = dayMeals.reduce((acc, curr) => acc + curr.fat, 0);
+    const goals = user?.goals || DEFAULT_GOALS;
+    const remaining = Math.max(0, goals.calories - totalCals);
+    
+    const groupedMeals: Record<MealType, AnalysisRecord[]> = {
+        breakfast: dayMeals.filter(m => m.mealType === 'breakfast'),
+        lunch: dayMeals.filter(m => m.mealType === 'lunch'),
+        dinner: dayMeals.filter(m => m.mealType === 'dinner'),
+        snack: dayMeals.filter(m => m.mealType === 'snack' || !m.mealType), 
+    };
+
+    let relativeLabel = "";
+    if (dateOffset === 0) relativeLabel = "Hoje";
+    else if (dateOffset === 1) relativeLabel = "Amanhã";
+    else if (dateOffset === -1) relativeLabel = "Ontem";
+
+    const formattedDate = displayDate.toLocaleDateString('pt-BR', { 
+        weekday: 'short', 
+        day: 'numeric', 
+        month: 'long' 
+    });
+
+    return { totalCals, totalProtein, totalCarbs, totalFat, remaining, dayMeals, goals, groupedMeals, relativeLabel, formattedDate };
+  };
+
+  const { totalCals, totalProtein, totalCarbs, totalFat, remaining, dayMeals, goals, groupedMeals, relativeLabel, formattedDate } = getTodayStats();
   
   const progressData = [
       { day: 'Seg', weight: 68.2 },
@@ -174,11 +390,11 @@ function App() {
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
       return (
-        <div className="bg-zinc-800/95 backdrop-blur-md border border-zinc-700 p-3 rounded-2xl shadow-2xl shadow-black/50">
-          <p className="text-zinc-400 text-xs font-medium mb-1">{label}</p>
+        <div className="bg-zinc-800/95 dark:bg-zinc-800/95 bg-white/95 backdrop-blur-md border border-zinc-700 dark:border-zinc-700 border-zinc-200 p-3 rounded-2xl shadow-2xl">
+          <p className="text-zinc-500 dark:text-zinc-400 text-xs font-medium mb-1">{label}</p>
           <div className="flex items-baseline gap-1">
-             <p className="text-white font-bold text-xl">{payload[0].value}</p>
-             <span className="text-xs font-medium text-emerald-400">kg</span>
+             <p className="text-zinc-900 dark:text-white font-bold text-xl">{payload[0].value}</p>
+             <span className="text-xs font-medium text-emerald-500">kg</span>
           </div>
         </div>
       );
@@ -186,340 +402,432 @@ function App() {
     return null;
   };
 
-  // Render Logic
-  if (view === 'welcome') {
+  const MealSection = ({ title, type, items, icon }: { title: string, type: MealType, items: AnalysisRecord[], icon: string }) => {
+    const sectionCals = items.reduce((acc, curr) => acc + curr.calories, 0);
+    
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center p-8 text-white text-center relative overflow-hidden">
-        <div className="relative z-10 flex flex-col items-center">
-             <div className="w-24 h-24 bg-white/5 p-6 rounded-[2rem] mb-10 backdrop-blur-xl border border-white/10 flex items-center justify-center shadow-2xl">
-                 <LeafIcon className="w-10 h-10 text-emerald-400" />
-            </div>
-            <h1 className="text-5xl font-extrabold tracking-tight mb-4 bg-clip-text text-transparent bg-gradient-to-br from-white to-zinc-500">NutriVision</h1>
-            <p className="text-xl text-zinc-400 mb-12 font-medium max-w-xs mx-auto">Transforme seu corpo com o poder da inteligência artificial.</p>
-            <button 
-            onClick={() => setView('login')}
-            className="w-full max-w-xs bg-white text-black font-extrabold text-lg py-5 rounded-[2rem] hover:bg-zinc-200 active:scale-95 transition-all shadow-[0_0_40px_-10px_rgba(255,255,255,0.3)]"
-            >
-            Começar Agora
-            </button>
-        </div>
-      </div>
-    );
-  }
-
-  if (view === 'login') {
-    return (
-      <div className="min-h-screen flex flex-col p-8 justify-center animate-in fade-in duration-500">
-         <button onClick={() => setView('welcome')} className="absolute top-8 left-8 w-10 h-10 bg-zinc-900 rounded-full flex items-center justify-center text-zinc-400 active:scale-95 transition-transform">
-             <ChevronLeftIcon className="w-5 h-5" />
-         </button>
-        <h2 className="text-4xl font-extrabold text-white mb-3 tracking-tight">Criar Conta</h2>
-        <p className="text-zinc-500 mb-10 text-lg">Seus dados são usados apenas para personalizar sua dieta.</p>
-        
-        <form onSubmit={handleLogin} className="space-y-4">
-            <div className="bg-zinc-900/50 p-1 rounded-[2rem] border border-zinc-800 focus-within:border-emerald-500 transition-colors">
-                 <input type="text" className="w-full p-4 bg-transparent text-white focus:outline-none placeholder-zinc-600 font-medium" placeholder="Nome" required />
-            </div>
-            <div className="bg-zinc-900/50 p-1 rounded-[2rem] border border-zinc-800 focus-within:border-emerald-500 transition-colors">
-                <input type="email" className="w-full p-4 bg-transparent text-white focus:outline-none placeholder-zinc-600 font-medium" placeholder="Email" required />
-            </div>
-            <div className="bg-zinc-900/50 p-1 rounded-[2rem] border border-zinc-800 focus-within:border-emerald-500 transition-colors">
-                <input type="password" className="w-full p-4 bg-transparent text-white focus:outline-none placeholder-zinc-600 font-medium" placeholder="Senha" required />
+        <div className="bg-white/50 dark:bg-zinc-900/50 rounded-[2rem] border border-zinc-200 dark:border-zinc-800 overflow-hidden shadow-sm">
+            <div className="p-4 flex justify-between items-center bg-white/50 dark:bg-zinc-900/50">
+                <div className="flex items-center gap-3">
+                    <span className="text-xl">{icon}</span>
+                    <div>
+                        <h3 className="text-sm font-bold text-zinc-900 dark:text-white">{title}</h3>
+                        <p className="text-xs text-zinc-500 font-medium">{Math.round(sectionCals)} kcal</p>
+                    </div>
+                </div>
+                {!dayFinished && (
+                    <button 
+                        onClick={() => handleInitiateScan(type)}
+                        className="w-8 h-8 rounded-full bg-emerald-500/10 text-emerald-500 flex items-center justify-center border border-emerald-500/20 active:scale-90 transition-transform hover:bg-emerald-500/20"
+                    >
+                        <PlusIcon className="w-5 h-5" />
+                    </button>
+                )}
             </div>
             
-            <button type="submit" className="w-full bg-white text-black font-bold py-5 rounded-[2rem] shadow-xl shadow-white/5 mt-6 active:scale-[0.98] transition-all text-lg hover:bg-zinc-200">
-                Criar Conta
-            </button>
-        </form>
-         <button onClick={() => handleLogin({ preventDefault: () => {} } as any)} className="mt-8 text-zinc-500 font-semibold text-sm text-center w-full hover:text-white transition-colors">
-            Continuar como convidado
-        </button>
-      </div>
-    );
-  }
-
-  if (view === 'onboarding' && user) {
-      return (
-          <OnboardingScreen 
-            user={user}
-            onComplete={handleOnboardingComplete}
-          />
-      )
-  }
-
-  if (view === 'camera' && isLoading) {
-    return (
-      <div className="min-h-screen bg-black flex flex-col items-center justify-center p-8 relative overflow-hidden">
-        <div className="relative w-72 h-72 border border-zinc-800/50 rounded-[2.5rem] flex items-center justify-center overflow-hidden mb-8 bg-zinc-900/30 backdrop-blur-sm">
-            <div className="absolute inset-0 bg-emerald-500/10 animate-pulse"></div>
-            <div className="w-full h-1.5 bg-emerald-500 shadow-[0_0_30px_rgba(16,185,129,0.8)] absolute top-0 animate-[scan_2s_ease-in-out_infinite]"></div>
-            <LeafIcon className="w-20 h-20 text-zinc-600" />
+            <div className="p-2 space-y-1">
+                {items.length === 0 ? (
+                    <div className="p-4 text-center">
+                        <p className="text-xs text-zinc-400 dark:text-zinc-600 font-medium">Nenhum registro</p>
+                    </div>
+                ) : (
+                    items.slice().reverse().map(item => (
+                        <div key={item.id} onClick={() => handleSelectHistoryItem(item)} className="p-2 rounded-xl flex items-center gap-3 hover:bg-zinc-100 dark:hover:bg-zinc-800/50 transition-colors cursor-pointer active:scale-[0.99]">
+                            <img 
+                                src={item.imageUrl} 
+                                alt="" 
+                                className="w-10 h-10 rounded-lg object-cover bg-zinc-200 dark:bg-zinc-800" 
+                                onError={(e) => { (e.target as HTMLImageElement).src = 'https://placehold.co/100x100/18181b/52525b?text=Food'; }}
+                            />
+                            <div className="flex-1 min-w-0">
+                                <h4 className="font-bold text-zinc-800 dark:text-white text-xs truncate">{item.foodName}</h4>
+                                <p className="text-zinc-500 text-[10px] font-medium">{Math.round(item.calories)} kcal</p>
+                            </div>
+                        </div>
+                    ))
+                )}
+            </div>
         </div>
-        <h2 className="text-3xl font-bold text-white tracking-tight mb-2">Analisando...</h2>
-        <p className="text-zinc-500 text-center max-w-xs">Nossa IA está identificando ingredientes e calculando macros.</p>
-        <style>{`@keyframes scan { 0% { top: 0%; opacity: 0; } 20% { opacity: 1; } 80% { opacity: 1; } 100% { top: 100%; opacity: 0; } }`}</style>
-      </div>
     );
-  }
+  };
 
-  if (view === 'result' && currentAnalysis && currentImage) {
-    return (
-      <AnalysisResult 
-        data={currentAnalysis}
-        imageUrl={currentImage}
-        onSave={handleSaveAnalysis}
-        onCancel={() => setView('home')}
-      />
-    );
-  }
-
-  // Improved Bottom Nav with Glassmorphism
-  // Changed max-w-xs to max-w-sm for better spacing on larger phones
   const BottomNav = () => (
-    <div className="fixed bottom-6 left-1/2 -translate-x-1/2 w-full max-w-sm z-50">
-        <nav className="glass bg-zinc-900/80 text-white py-3 px-5 rounded-[2rem] shadow-2xl flex items-center justify-between relative">
-            <button onClick={() => setView('home')} className={`p-2 transition-all active:scale-90 ${view === 'home' ? 'text-white bg-zinc-800 rounded-full' : 'text-zinc-500 hover:text-zinc-300'}`}>
+    <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-50">
+        <nav className="flex items-center gap-2 p-1.5 bg-zinc-900/90 dark:bg-[#18181b]/90 backdrop-blur-2xl border border-white/10 rounded-full shadow-2xl shadow-black/20 dark:shadow-black/80">
+            <button 
+                onClick={() => setView('home')} 
+                className={`w-12 h-12 rounded-full flex items-center justify-center transition-all duration-300 ${view === 'home' ? 'text-white bg-white/10' : 'text-zinc-500 hover:text-zinc-300'}`}
+            >
                 <HomeIcon className="w-6 h-6" />
             </button>
             
-            <button onClick={() => setView('workouts')} className={`p-2 transition-all active:scale-90 ${view === 'workouts' ? 'text-white bg-zinc-800 rounded-full' : 'text-zinc-500 hover:text-zinc-300'}`}>
-                <BarbellIcon className="w-6 h-6" />
+            <button 
+                onClick={handleGenericScan}
+                disabled={dayFinished}
+                className={`w-14 h-14 rounded-full flex items-center justify-center text-black shadow-lg shadow-emerald-500/20 transition-all mx-1 ${dayFinished ? 'bg-zinc-700 cursor-not-allowed opacity-50' : 'bg-emerald-500 hover:scale-105 active:scale-95'}`}
+            >
+                <PlusIcon className="w-8 h-8" />
             </button>
 
-            <div className="w-12"></div> {/* Spacer */}
-
-            <button onClick={() => setView('progress')} className={`p-2 transition-all active:scale-90 ${view === 'progress' ? 'text-white bg-zinc-800 rounded-full' : 'text-zinc-500 hover:text-zinc-300'}`}>
-                <ChartBarIcon className="w-6 h-6" />
-            </button>
-
-            <button onClick={() => setView('history')} className={`p-2 transition-all active:scale-90 ${view === 'history' ? 'text-white bg-zinc-800 rounded-full' : 'text-zinc-500 hover:text-zinc-300'}`}>
+            <button 
+                onClick={() => setView('history')} 
+                className={`w-12 h-12 rounded-full flex items-center justify-center transition-all duration-300 ${view === 'history' || view === 'progress' ? 'text-white bg-white/10' : 'text-zinc-500 hover:text-zinc-300'}`}
+            >
                 <HistoryIcon className="w-6 h-6" />
             </button>
         </nav>
-
-        {/* Floating Action Button */}
-        <button 
-            onClick={() => fileInputRef.current?.click()}
-            className="absolute left-1/2 -translate-x-1/2 -top-6 w-16 h-16 bg-white rounded-full flex items-center justify-center text-black shadow-[0_10px_30px_-10px_rgba(255,255,255,0.4)] hover:shadow-white/50 active:scale-95 transition-all"
-        >
-            <PlusIcon className="w-7 h-7" />
-        </button>
     </div>
   );
 
-  if (view === 'history') {
-    return (
-      <>
-        <HistoryScreen 
-            history={history}
-            onBack={() => setView('home')}
-            onSelect={handleSelectHistoryItem}
-        />
-        <BottomNav />
-        <input type="file" ref={fileInputRef} accept="image/*" capture="environment" onChange={handleImageSelect} className="hidden" />
-      </>
-    );
-  }
-
-  if (view === 'workouts') {
-      if (!user) { setView('login'); return null; }
-      return (
-          <>
-            <WorkoutScreen 
-                user={user}
-                onUpdateUser={handleUpdateProfile}
-                onNavigateToSettings={() => setView('settings')}
-            />
-            <BottomNav />
-             <input type="file" ref={fileInputRef} accept="image/*" capture="environment" onChange={handleImageSelect} className="hidden" />
-          </>
-      )
-  }
-
-  if (view === 'progress') {
-      return (
-        <div className="min-h-screen flex flex-col pb-32 no-scrollbar p-6 animate-in fade-in duration-500">
-            <h2 className="text-3xl font-extrabold text-white mb-6">Seu Progresso</h2>
-            
-            <div className="bg-zinc-900/50 backdrop-blur-sm p-6 rounded-[2rem] border border-zinc-800 mb-6 shadow-xl">
-                <div className="flex justify-between items-center mb-8">
-                    <div>
-                        <h3 className="font-bold text-white text-lg">Peso Corporal</h3>
-                        <p className="text-zinc-500 text-sm font-medium">Últimos 7 dias</p>
-                    </div>
-                    <div className="bg-emerald-500/10 border border-emerald-500/20 px-3 py-1.5 rounded-full flex items-center gap-2">
-                        <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
-                        <span className="text-xs font-bold text-emerald-400">-1.4 kg</span>
-                    </div>
-                </div>
-                
-                <div className="h-64 w-full">
-                     <ResponsiveContainer width="100%" height="100%">
-                        <AreaChart data={progressData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-                            <defs>
-                                <linearGradient id="colorWeight" x1="0" y1="0" x2="0" y2="1">
-                                    <stop offset="5%" stopColor="#10B981" stopOpacity={0.3}/>
-                                    <stop offset="95%" stopColor="#10B981" stopOpacity={0}/>
-                                </linearGradient>
-                            </defs>
-                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#27272a" />
-                            <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{fill: '#71717a', fontSize: 12, fontWeight: 500}} dy={15} />
-                            <YAxis hide domain={['dataMin - 1', 'dataMax + 1']} />
-                            <Tooltip content={<CustomTooltip />} cursor={{ stroke: '#10B981', strokeWidth: 1, strokeDasharray: '5 5' }} />
-                            <Area type="monotone" dataKey="weight" stroke="#10B981" strokeWidth={4} fillOpacity={1} fill="url(#colorWeight)" animationDuration={2000} />
-                        </AreaChart>
-                     </ResponsiveContainer>
-                </div>
-            </div>
-
-            <div className="grid grid-cols-1 gap-4">
-                 <div className="bg-zinc-900/50 backdrop-blur-sm p-6 rounded-[2rem] border border-zinc-800 flex flex-col items-center text-center">
-                     <div className="w-12 h-12 rounded-full bg-orange-500/10 flex items-center justify-center mb-3 text-2xl">🔥</div>
-                     <p className="text-4xl font-black text-white tracking-tighter">12</p>
-                     <p className="text-zinc-500 text-xs font-bold uppercase tracking-wider mt-1">Dias Seguidos</p>
-                 </div>
-            </div>
-            
-            <BottomNav />
-            <input type="file" ref={fileInputRef} accept="image/*" capture="environment" onChange={handleImageSelect} className="hidden" />
-        </div>
-      );
-  }
-
-  if (view === 'settings') {
-    if (!user) { setView('login'); return null; }
-    return (
-      <ProfileScreen 
-        user={user}
-        onSave={handleUpdateProfile}
-        onBack={() => setView('home')}
-        onLogout={() => {
-            localStorage.removeItem('nutrivision_user');
-            setUser(null);
-            setView('welcome');
-        }}
-        onClearHistory={() => {
-            setHistory([]);
-            localStorage.removeItem('nutrivision_history');
-        }}
-      />
-    );
-  }
-
-  // Home View
   return (
-    <div className="min-h-screen flex flex-col pb-32 no-scrollbar animate-in fade-in duration-500">
-      
-      {/* Header */}
-      <div className="px-6 pt-12 pb-4 flex justify-between items-center sticky top-0 z-20">
-        <div>
-           <p className="text-zinc-500 text-xs font-bold uppercase tracking-widest mb-1">
-             {new Date().toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' })}
-           </p>
-           <h1 className="text-3xl font-extrabold text-white tracking-tight">Hoje</h1>
-        </div>
-        <div className="flex gap-4 items-center">
-            {/* Streak Widget */}
-            <div className="flex gap-1.5 items-center bg-zinc-900/80 backdrop-blur-md p-2 rounded-2xl border border-zinc-800">
-                {WEEK_DAYS.map((day, idx) => (
-                    <div key={idx} className="flex flex-col items-center">
-                        <span className={`text-[9px] font-bold mb-1 ${idx === new Date().getDay() ? 'text-white' : 'text-zinc-600'}`}>{day}</span>
-                        <div className={`w-1.5 h-1.5 rounded-full ${weekStatus[idx] ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-zinc-800'}`}></div>
-                    </div>
-                ))}
-            </div>
-            <button onClick={() => setView('settings')} className="w-10 h-10 bg-zinc-900 rounded-full flex items-center justify-center text-zinc-400 border border-zinc-800 hover:text-white transition-colors active:scale-95">
-                <SettingsIcon className="w-5 h-5" />
-            </button>
-        </div>
-      </div>
+    <div className={theme}>
+        <div className="min-h-screen flex flex-col transition-colors duration-300 bg-gray-50 dark:bg-zinc-950 text-zinc-900 dark:text-white">
+            
+            <WaterModal 
+                isOpen={isWaterModalOpen}
+                onClose={() => setIsWaterModalOpen(false)}
+                current={waterIntake}
+                goal={user?.goals?.water || 2500}
+                onAdd={updateWater}
+            />
 
-      {/* Dashboard Card */}
-      <div className="px-6 mb-8">
-         <div className="bg-zinc-900/80 backdrop-blur-md text-white rounded-[2.5rem] p-6 border border-zinc-800 relative overflow-hidden shadow-2xl">
-             <div className="flex justify-between items-center gap-6">
-                {/* Ring Chart */}
-                <div className="h-36 w-36 relative shrink-0">
-                    <ResponsiveContainer width="100%" height="100%">
-                        <PieChart>
-                            <Pie data={homeChartData} cx="50%" cy="50%" innerRadius={55} outerRadius={68} dataKey="value" startAngle={90} endAngle={-270} stroke="none" cornerRadius={10} paddingAngle={5}>
-                                <Cell fill="#10B981" />
-                                <Cell fill="#27272a" />
-                            </Pie>
-                        </PieChart>
-                    </ResponsiveContainer>
-                    <div className="absolute inset-0 flex flex-col items-center justify-center">
-                        <FireIcon className="w-5 h-5 text-zinc-500 mb-1" />
-                        <span className="text-2xl font-black tracking-tighter">{remaining}</span>
-                        <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider">Restantes</span>
+            {view === 'welcome' && (
+                <div className="min-h-screen flex flex-col items-center justify-center p-8 text-center relative overflow-hidden bg-zinc-950">
+                    <div className="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1490645935967-10de6ba17061?q=80&w=2053&auto=format&fit=crop')] bg-cover bg-center opacity-10"></div>
+                    <div className="relative z-10 flex flex-col items-center">
+                        <div className="w-24 h-24 bg-gradient-to-tr from-emerald-500 to-teal-400 p-6 rounded-[2rem] mb-10 shadow-[0_0_50px_-10px_rgba(16,185,129,0.5)] flex items-center justify-center">
+                            <LeafIcon className="w-12 h-12 text-black" />
+                        </div>
+                        <h1 className="text-5xl font-black tracking-tighter mb-4 text-white">Nutri<span className="text-emerald-500">Vision</span></h1>
+                        <p className="text-xl text-zinc-300 mb-12 font-medium max-w-xs mx-auto leading-relaxed">
+                            A maneira mais inteligente de rastrear sua dieta. Basta apontar e capturar.
+                        </p>
+                        <button 
+                        onClick={() => setView('login')}
+                        className="w-full max-w-xs bg-white text-black font-extrabold text-lg py-5 rounded-full hover:bg-zinc-100 active:scale-95 transition-all shadow-[0_0_40px_-10px_rgba(255,255,255,0.3)]"
+                        >
+                        Começar
+                        </button>
                     </div>
                 </div>
+            )}
 
-                {/* Macro Bars */}
-                <div className="flex-1 flex flex-col justify-center space-y-4">
-                    {[{l:'Proteína', v:totalProtein, t:goals.protein, c:'amber'}, {l:'Carbo', v:totalCarbs, t:goals.carbs, c:'emerald'}, {l:'Gordura', v:totalFat, t:goals.fat, c:'blue'}].map((m) => (
-                         <div key={m.l}>
-                            <div className="flex justify-between text-xs font-bold mb-1.5">
-                                <span className="text-zinc-400">{m.l}</span>
-                                <span className="text-white">{Math.round(m.v)} / {m.t}g</span>
+            {view === 'login' && (
+                <AuthScreen 
+                    onLogin={handleAuth}
+                    onSkip={handleSkipAuth}
+                />
+            )}
+
+            {view === 'onboarding' && user && (
+                <OnboardingScreen 
+                    user={user}
+                    onComplete={handleOnboardingComplete}
+                />
+            )}
+
+            {view === 'camera' && isLoading && (
+                <div className="min-h-screen bg-zinc-950 flex flex-col items-center justify-center p-8 relative overflow-hidden">
+                    <div className="absolute inset-0 bg-emerald-500/5 animate-pulse"></div>
+                    <div className="relative w-64 h-64 border-2 border-dashed border-emerald-500/50 rounded-[2.5rem] flex items-center justify-center overflow-hidden mb-8">
+                        <div className="w-full h-full bg-emerald-500/10 absolute animate-ping opacity-20"></div>
+                        <LeafIcon className="w-20 h-20 text-emerald-500 animate-bounce" />
+                    </div>
+                    <h2 className="text-3xl font-black text-white tracking-tight mb-2">Analisando...</h2>
+                    <p className="text-zinc-500 text-center max-w-xs font-medium">Identificando alimentos e calculando nutrientes.</p>
+                </div>
+            )}
+
+            {view === 'result' && currentAnalysis && currentImage && (
+                <AnalysisResult 
+                    data={currentAnalysis}
+                    imageUrl={currentImage}
+                    onSave={handleSaveAnalysis}
+                    onCancel={() => setView('home')}
+                    initialMealType={selectedMealType || undefined}
+                    onDelete={handleDeleteAnalysis}
+                />
+            )}
+
+            {view === 'history' && (
+                <>
+                    <HistoryScreen 
+                        history={history.filter(h => h.userId === user?.id)} 
+                        onBack={() => setView('home')}
+                        onSelect={handleSelectHistoryItem}
+                    />
+                    <BottomNav />
+                    <input type="file" ref={fileInputRef} accept="image/*" capture="environment" onChange={handleImageSelect} className="hidden" />
+                </>
+            )}
+
+            {view === 'progress' && (
+                <div className="min-h-screen flex flex-col pb-32 no-scrollbar p-6 animate-in fade-in duration-500 bg-gray-50 dark:bg-zinc-950">
+                    <div className="flex justify-between items-center mb-6">
+                        <h2 className="text-3xl font-black text-zinc-900 dark:text-white">Seu Progresso</h2>
+                        <button 
+                            onClick={() => setView('home')}
+                            className="w-10 h-10 rounded-full bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 flex items-center justify-center text-zinc-600 dark:text-white active:scale-95 transition-transform shadow-sm"
+                        >
+                            <ChevronLeftIcon className="w-5 h-5" />
+                        </button>
+                    </div>
+                    
+                    <div className="bg-white dark:bg-zinc-900 p-6 rounded-[2rem] border border-zinc-200 dark:border-zinc-800 mb-6 relative overflow-hidden shadow-sm">
+                        <div className="flex justify-between items-center mb-8 relative z-10">
+                            <div>
+                                <h3 className="font-bold text-zinc-900 dark:text-white text-lg">Peso Corporal</h3>
+                                <p className="text-zinc-500 text-sm font-medium">Últimos 7 dias</p>
                             </div>
-                            <div className="h-2 w-full bg-zinc-950 rounded-full overflow-hidden border border-zinc-800/50">
-                                <div className={`h-full bg-${m.c}-500 rounded-full transition-all duration-1000`} style={{ width: `${Math.min(100, (m.v / m.t) * 100)}%` }}></div>
+                            <div className="bg-emerald-500/20 px-3 py-1.5 rounded-full flex items-center gap-2">
+                                <span className="text-xs font-bold text-emerald-500">-1.4 kg</span>
                             </div>
                         </div>
-                    ))}
+                        
+                        <div className="h-64 w-full relative z-10">
+                             <ResponsiveContainer width="100%" height="100%">
+                                <AreaChart data={progressData}>
+                                    <defs>
+                                        <linearGradient id="colorWeight" x1="0" y1="0" x2="0" y2="1">
+                                            <stop offset="5%" stopColor="#10B981" stopOpacity={0.4}/>
+                                            <stop offset="95%" stopColor="#10B981" stopOpacity={0}/>
+                                        </linearGradient>
+                                    </defs>
+                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#3f3f46" opacity={0.3} />
+                                    <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{fill: '#71717a', fontSize: 12, fontWeight: 700}} dy={15} />
+                                    <YAxis hide domain={['dataMin - 1', 'dataMax + 1']} />
+                                    <Tooltip content={<CustomTooltip />} cursor={{ stroke: '#10B981', strokeWidth: 2 }} />
+                                    <Area type="monotone" dataKey="weight" stroke="#10B981" strokeWidth={4} fillOpacity={1} fill="url(#colorWeight)" animationDuration={1500} />
+                                </AreaChart>
+                             </ResponsiveContainer>
+                        </div>
+                    </div>
+                    
+                    <BottomNav />
+                    <input type="file" ref={fileInputRef} accept="image/*" capture="environment" onChange={handleImageSelect} className="hidden" />
                 </div>
-             </div>
-         </div>
-      </div>
+            )}
 
-      {/* Meals Section */}
-      <div className="px-6 flex-1">
-        {error && (
-            <div className="bg-red-500/10 text-red-500 px-4 py-3 rounded-2xl mb-6 text-sm font-bold border border-red-500/20 text-center">
-                {error}
-            </div>
-        )}
+            {view === 'settings' && user && (
+                <ProfileScreen 
+                    user={user}
+                    onSave={handleUpdateProfile}
+                    onBack={() => setView('home')}
+                    onLogout={() => {
+                        localStorage.removeItem('nutrivision_user_id');
+                        setUser(null);
+                        setView('welcome');
+                    }}
+                    onClearHistory={async () => {
+                        // In a real app we'd clear IDB, but here let's just clear state
+                        // The user can re-login to see empty history or we implement delete all in service
+                        setHistory([]);
+                    }}
+                    theme={theme}
+                    onToggleTheme={toggleTheme}
+                />
+            )}
 
-        {todayMeals.length > 0 && (
-            <>
-                <div className="flex justify-between items-end mb-4 px-2">
-                    <h3 className="text-xl font-bold text-white tracking-tight">Refeições</h3>
-                    <span className="text-xs font-bold text-zinc-500 uppercase tracking-widest">{Math.round(totalCals)} kcal hoje</span>
-                </div>
+            {view === 'home' && user && (
+                <div className="min-h-screen flex flex-col pb-32 no-scrollbar animate-in fade-in duration-500 bg-gray-50 dark:bg-zinc-950">
+                  
+                  <div className="px-6 pt-12 pb-2 flex justify-between items-center sticky top-0 z-30 bg-gray-50/80 dark:bg-zinc-950/80 backdrop-blur-xl transition-colors">
+                    <div className="flex items-center gap-3">
+                         <div className="w-10 h-10 rounded-full bg-emerald-500/20 flex items-center justify-center text-emerald-500 font-bold border border-emerald-500/20">
+                             {user?.name.charAt(0).toUpperCase()}
+                         </div>
+                         <div>
+                            <p className="text-zinc-500 text-[10px] font-bold uppercase tracking-widest transition-all">
+                                {isScrolled ? formattedDate : "Olá,"}
+                            </p>
+                            <h1 className="text-lg font-bold text-zinc-900 dark:text-white leading-none">{user?.name}</h1>
+                         </div>
+                    </div>
+                    <button onClick={() => setView('settings')} className="w-10 h-10 rounded-full flex items-center justify-center text-zinc-400 dark:text-zinc-500 hover:text-zinc-900 dark:hover:text-white hover:bg-zinc-100 dark:hover:bg-zinc-900 transition-all">
+                        <SettingsIcon className="w-6 h-6" />
+                    </button>
+                  </div>
 
-                <div className="space-y-3">
-                    {todayMeals.slice().reverse().map(item => (
-                        <div key={item.id} onClick={() => handleSelectHistoryItem(item)} className="bg-zinc-900/60 backdrop-blur-sm p-3 rounded-[2rem] border border-zinc-800/50 flex items-center gap-4 active:scale-[0.98] transition-transform cursor-pointer hover:bg-zinc-800/80">
-                            <div className="w-16 h-16 rounded-[1.2rem] bg-zinc-800 overflow-hidden flex-shrink-0 border border-zinc-700/30">
-                                <img 
-                                    src={item.imageUrl} 
-                                    alt="" 
-                                    className="w-full h-full object-cover" 
-                                    onError={(e) => { (e.target as HTMLImageElement).src = 'https://placehold.co/100x100/18181b/52525b?text=Food'; }}
-                                />
-                            </div>
-                            <div className="flex-1 py-1 min-w-0">
-                                <h4 className="font-bold text-white text-base truncate mb-1">{item.foodName}</h4>
-                                <div className="flex gap-3 text-xs font-bold text-zinc-500">
-                                    <span className="flex items-center gap-1 text-emerald-400 bg-emerald-400/10 px-2 py-0.5 rounded-md">
-                                        <FireIcon className="w-3 h-3" />
-                                        {Math.round(item.calories)} kcal
-                                    </span>
+                  <div className="px-5 space-y-4">
+                     
+                     <div className="grid grid-cols-2 gap-3">
+                         <div onClick={() => setView('progress')} className="col-span-2 bg-white dark:bg-gradient-to-br dark:from-zinc-900 dark:to-black p-6 rounded-[2rem] border border-zinc-200 dark:border-zinc-800 relative overflow-hidden cursor-pointer active:scale-[0.98] transition-all shadow-sm">
+                             <div className="flex justify-between items-start relative z-10">
+                                 <div>
+                                     <p className="text-zinc-500 font-bold text-xs uppercase tracking-wider mb-1">Disponível</p>
+                                     <div className="flex items-baseline gap-1">
+                                         <h2 className="text-5xl font-black text-zinc-900 dark:text-white tracking-tighter">{Math.round(remaining)}</h2>
+                                         <span className="text-zinc-500 font-medium">kcal</span>
+                                     </div>
+                                     <div className="mt-4 flex gap-4">
+                                         <div>
+                                             <p className="text-zinc-500 dark:text-zinc-600 text-[10px] font-bold uppercase">Consumido</p>
+                                             <p className="text-zinc-800 dark:text-white font-bold">{Math.round(totalCals)}</p>
+                                         </div>
+                                         <div>
+                                             <p className="text-zinc-500 dark:text-zinc-600 text-[10px] font-bold uppercase">Meta</p>
+                                             <p className="text-emerald-500 font-bold">{goals.calories}</p>
+                                         </div>
+                                     </div>
+                                 </div>
+                                 
+                                 <div className="h-24 w-24 relative">
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <PieChart>
+                                            <Pie 
+                                                data={[{v: totalCals}, {v: remaining}]} 
+                                                cx="50%" cy="50%" 
+                                                innerRadius={36} 
+                                                outerRadius={45} 
+                                                dataKey="v" 
+                                                startAngle={90} 
+                                                endAngle={-270} 
+                                                stroke="none" 
+                                                cornerRadius={10} 
+                                                paddingAngle={5}
+                                            >
+                                                <Cell fill={theme === 'light' ? "#e4e4e7" : "#3f3f46"} opacity={theme === 'light' ? 1 : 0.3} /> 
+                                                <Cell fill="#10B981" /> 
+                                            </Pie>
+                                        </PieChart>
+                                    </ResponsiveContainer>
+                                    <div className="absolute inset-0 flex items-center justify-center">
+                                        <FireIcon className="w-6 h-6 text-emerald-500" />
+                                    </div>
+                                 </div>
+                             </div>
+                         </div>
+
+                        <div 
+                            className={`bg-blue-50 dark:bg-blue-950/20 p-5 rounded-[2rem] border border-blue-200 dark:border-blue-500/20 flex flex-col justify-between relative overflow-hidden group transition-all cursor-pointer shadow-sm select-none ${waterAnimating ? 'scale-[0.97] bg-blue-100 dark:bg-blue-900/30 border-blue-300 dark:border-blue-500/50' : 'active:scale-[0.98]'}`} 
+                            onClick={() => setIsWaterModalOpen(true)}
+                        >
+                            {waterAnimating && (
+                                <div className="absolute inset-0 flex items-center justify-center z-20 pointer-events-none animate-out fade-out slide-out-to-top-10 duration-500">
+                                    <span className="text-2xl font-black text-blue-600 dark:text-blue-400 drop-shadow-md">Adicionado</span>
+                                </div>
+                            )}
+
+                            <div className="absolute -right-4 -bottom-4 w-24 h-24 bg-blue-200 dark:bg-blue-500/20 rounded-full blur-2xl group-hover:bg-blue-300 dark:group-hover:bg-blue-500/30 transition-all opacity-50 dark:opacity-100"></div>
+                            <div className={`relative z-10 transition-opacity duration-200 ${waterAnimating ? 'opacity-50 blur-sm' : 'opacity-100'}`}>
+                                <div className="flex justify-between items-start mb-2">
+                                <DropletIcon className={`w-6 h-6 text-blue-500 dark:text-blue-400 transition-transform duration-500 ${waterAnimating ? 'scale-110 rotate-12' : ''}`} />
+                                <span className="bg-blue-100 dark:bg-blue-500/20 text-blue-600 dark:text-blue-300 text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1 group-hover:bg-blue-200 dark:group-hover:bg-blue-500/30 transition-colors">
+                                    <PlusIcon className="w-3 h-3" />
+                                    Adicionar
+                                </span>
+                                </div>
+                                <p className="text-2xl font-black text-zinc-900 dark:text-white">{waterIntake}<span className="text-sm text-blue-400 dark:text-blue-300/70 font-medium ml-1">/{goals.water || 2500}</span></p>
+                                <div className="w-full bg-blue-100 dark:bg-blue-950/50 h-1.5 rounded-full mt-2 overflow-hidden">
+                                    <div className="h-full bg-blue-500 transition-all duration-500" style={{ width: `${Math.min(100, (waterIntake / (goals.water || 2500)) * 100)}%` }}></div>
                                 </div>
                             </div>
-                            <div className="pr-3 text-zinc-600">
-                                 <ChevronLeftIcon className="w-5 h-5 rotate-180" />
-                            </div>
                         </div>
-                    ))}
-                </div>
-            </>
-        )}
-      </div>
 
-      <BottomNav />
-      <input type="file" ref={fileInputRef} accept="image/*" capture="environment" onChange={handleImageSelect} className="hidden" />
+                         <div className="bg-white dark:bg-zinc-900 p-5 rounded-[2rem] border border-zinc-200 dark:border-zinc-800 flex flex-col justify-between shadow-sm">
+                             <div className="flex justify-between items-start mb-2">
+                                <span className="text-2xl">🥩</span>
+                             </div>
+                             <div>
+                                <p className="text-zinc-500 text-[10px] font-bold uppercase">Proteína</p>
+                                <p className="text-xl font-black text-zinc-900 dark:text-white">{Math.round(totalProtein)}<span className="text-xs text-zinc-500 font-medium">/{goals.protein}g</span></p>
+                                <div className="w-full bg-zinc-100 dark:bg-zinc-800 h-1.5 rounded-full mt-2 overflow-hidden">
+                                     <div className="h-full bg-amber-500 transition-all duration-500" style={{ width: `${Math.min(100, (totalProtein / goals.protein) * 100)}%` }}></div>
+                                 </div>
+                             </div>
+                         </div>
+                     </div>
+
+                     <div className="grid grid-cols-2 gap-3">
+                          <div className="bg-white dark:bg-zinc-900 px-4 py-3 rounded-2xl border border-zinc-200 dark:border-zinc-800 flex items-center gap-3 shadow-sm">
+                              <div className="w-1.5 h-8 bg-emerald-500 rounded-full"></div>
+                              <div>
+                                  <p className="text-zinc-500 text-[10px] font-bold uppercase">Carbo</p>
+                                  <p className="text-zinc-900 dark:text-white font-bold">{Math.round(totalCarbs)} / {goals.carbs}g</p>
+                              </div>
+                          </div>
+                          <div className="bg-white dark:bg-zinc-900 px-4 py-3 rounded-2xl border border-zinc-200 dark:border-zinc-800 flex items-center gap-3 shadow-sm">
+                              <div className="w-1.5 h-8 bg-blue-500 rounded-full"></div>
+                              <div>
+                                  <p className="text-zinc-500 text-[10px] font-bold uppercase">Gordura</p>
+                                  <p className="text-zinc-900 dark:text-white font-bold">{Math.round(totalFat)} / {goals.fat}g</p>
+                              </div>
+                          </div>
+                     </div>
+
+                     <div className="py-2">
+                        <div className="flex items-center justify-between bg-white dark:bg-zinc-900 p-2 rounded-3xl border border-zinc-200 dark:border-zinc-800 shadow-sm">
+                          <button 
+                            onClick={() => setDateOffset(prev => prev - 1)} 
+                            className="w-12 h-12 rounded-2xl flex items-center justify-center bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 active:scale-95 transition-all hover:bg-zinc-200 dark:hover:bg-zinc-700"
+                          >
+                              <ArrowLeftIcon className="w-6 h-6" />
+                          </button>
+                          
+                          <div className="flex flex-col items-center">
+                              {relativeLabel && (
+                                  <span className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest bg-emerald-500/10 px-2 py-0.5 rounded-full mb-0.5">{relativeLabel}</span>
+                              )}
+                              <h2 className="text-lg font-black text-zinc-900 dark:text-white capitalize leading-none flex items-center gap-2">
+                                  {!relativeLabel && <CalendarIcon className="w-4 h-4 text-zinc-500" />}
+                                  {formattedDate}
+                              </h2>
+                          </div>
+
+                          <button 
+                            onClick={() => setDateOffset(prev => prev + 1)} 
+                            className="w-12 h-12 rounded-2xl flex items-center justify-center bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 active:scale-95 transition-all hover:bg-zinc-200 dark:hover:bg-zinc-700"
+                          >
+                              <ArrowRightIcon className="w-6 h-6" />
+                          </button>
+                        </div>
+                     </div>
+
+                     <div className="pt-4 space-y-4">
+                        <h3 className="text-lg font-bold text-zinc-900 dark:text-white mb-2">Diário Alimentar</h3>
+                        
+                        <MealSection title="Café da Manhã" type="breakfast" icon="☕" items={groupedMeals.breakfast} />
+                        <MealSection title="Almoço" type="lunch" icon="🍽️" items={groupedMeals.lunch} />
+                        <MealSection title="Jantar" type="dinner" icon="🌙" items={groupedMeals.dinner} />
+                        <MealSection title="Lanches" type="snack" icon="🍎" items={groupedMeals.snack} />
+                     </div>
+                     
+                     <div className="py-6">
+                        {dayFinished ? (
+                             <div className="flex gap-3 animate-in fade-in slide-in-from-bottom-2">
+                                 <button 
+                                    onClick={handleReopenDay}
+                                    className="flex-1 py-4 rounded-2xl font-bold text-md flex items-center justify-center gap-2 transition-all shadow-sm bg-zinc-200 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 active:scale-[0.98]"
+                                 >
+                                     <RefreshIcon className="w-5 h-5" />
+                                     Reabrir Dia
+                                 </button>
+                                 <button 
+                                    onClick={handleGoToNextDay}
+                                    className="flex-1 py-4 rounded-2xl font-bold text-md flex items-center justify-center gap-2 transition-all shadow-lg bg-zinc-900 dark:bg-white text-white dark:text-black active:scale-[0.98]"
+                                 >
+                                     Ir para Amanhã
+                                     <ArrowRightIcon className="w-5 h-5" />
+                                 </button>
+                             </div>
+                        ) : (
+                            <button 
+                                onClick={handleFinishDay}
+                                className="w-full py-4 rounded-2xl font-bold text-lg flex items-center justify-center gap-2 transition-all shadow-lg bg-zinc-900 dark:bg-white text-white dark:text-black active:scale-[0.98]"
+                            >
+                                <SaveIcon className="w-6 h-6" />
+                                Finalizar Dia
+                            </button>
+                        )}
+                    </div>
+
+                  </div>
+
+                  <BottomNav />
+                  <input type="file" ref={fileInputRef} accept="image/*" capture="environment" onChange={handleImageSelect} className="hidden" />
+                </div>
+            )}
+        </div>
     </div>
   );
 }

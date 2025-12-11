@@ -4,13 +4,15 @@ export interface UserGoals {
   protein: number;
   carbs: number;
   fat: number;
+  water: number; // ml
 }
 
-export type WorkoutGoal = 'hypertrophy' | 'weight_loss' | 'strength' | 'endurance' | 'mobility';
-export type ExperienceLevel = 'beginner' | 'intermediate' | 'advanced';
-export type WorkoutLocation = 'gym' | 'home_equipment' | 'home_bodyweight';
+// Simplified Goal Structure for Nutrition Focus
+export type WeightGoal = 'lose_weight' | 'maintain' | 'gain_muscle';
+export type ActivityLevel = 'sedentary' | 'lightly_active' | 'moderately_active' | 'very_active';
+export type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snack';
 
-export interface WorkoutExercise {
+export interface Exercise {
   name: string;
   sets: string;
   reps: string;
@@ -19,16 +21,13 @@ export interface WorkoutExercise {
 }
 
 export interface WorkoutDay {
-  dayName: string; // ex: "Treino A - Peito e Tríceps"
+  dayName: string;
   focus: string;
-  exercises: WorkoutExercise[];
+  exercises: Exercise[];
 }
 
 export interface WorkoutPlan {
-  title: string;
-  description: string;
   days: WorkoutDay[];
-  generatedAt: number;
 }
 
 export interface User {
@@ -36,17 +35,21 @@ export interface User {
   name: string;
   email: string;
   joinedAt: number;
+  
+  // Body Stats
   weight?: number; // kg
   height?: number; // cm
   age?: number;
   gender?: 'male' | 'female';
-  activityLevel?: 'sedentary' | 'light' | 'moderate' | 'active';
-  goals?: UserGoals;
+  activityLevel?: ActivityLevel;
   
-  // Workout Specifics
-  workoutGoal?: WorkoutGoal;
-  experienceLevel?: ExperienceLevel;
-  workoutLocation?: WorkoutLocation;
+  // Goals
+  goals?: UserGoals;
+  weightGoal?: WeightGoal;
+
+  // Workout
+  workoutGoal?: string;
+  experienceLevel?: string;
   daysPerWeek?: number;
   workoutPlan?: WorkoutPlan;
 }
@@ -69,9 +72,10 @@ export interface AnalysisRecord extends NutritionData {
   imageUrl: string;
   timestamp: number;
   userId: string;
+  mealType?: MealType;
 }
 
-export type AppView = 'welcome' | 'login' | 'onboarding' | 'home' | 'camera' | 'result' | 'history' | 'progress' | 'settings' | 'workouts';
+export type AppView = 'welcome' | 'login' | 'onboarding' | 'home' | 'camera' | 'result' | 'history' | 'progress' | 'settings' | 'workout';
 
 export interface IconProps {
   className?: string;

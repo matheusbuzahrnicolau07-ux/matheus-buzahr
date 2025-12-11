@@ -1,6 +1,7 @@
+
 import React, { useState } from 'react';
-import { User, WorkoutGoal, ExperienceLevel, UserGoals } from '../types';
-import { ChevronLeftIcon, FireIcon, DumbbellIcon, ChartBarIcon } from './Icons';
+import { User, WeightGoal, UserGoals } from '../types';
+import { ChevronLeftIcon, FireIcon } from './Icons';
 
 interface OnboardingScreenProps {
   user: User;
@@ -15,15 +16,13 @@ const OnboardingScreen: React.FC<OnboardingScreenProps> = ({ user, onComplete })
     height: user.height || 170,
     age: user.age || 25,
     gender: user.gender || 'male',
-    workoutGoal: 'hypertrophy',
-    experienceLevel: 'beginner',
-    workoutLocation: 'gym',
-    daysPerWeek: 3,
+    weightGoal: 'maintain',
     goals: {
         calories: 2000,
         protein: 150,
         carbs: 200,
-        fat: 60
+        fat: 60,
+        water: 2500
     }
   });
 
@@ -44,13 +43,11 @@ const OnboardingScreen: React.FC<OnboardingScreenProps> = ({ user, onComplete })
 
   const calculateMacros = () => {
       const weight = formData.weight || 70;
-      const goal = formData.workoutGoal;
+      const goal = formData.weightGoal;
       
-      let factor = 29;
-      if (goal === 'weight_loss') factor = 24; // Deficit
-      else if (goal === 'hypertrophy') factor = 32; // Surplus
-      else if (goal === 'strength') factor = 30; // Slight Surplus
-      else factor = 28; // Maintenance
+      let factor = 29; // Maintain
+      if (goal === 'lose_weight') factor = 24; 
+      else if (goal === 'gain_muscle') factor = 32;
 
       const calories = Math.round(weight * factor);
       const protein = Math.round(weight * 2.0); 
@@ -58,7 +55,7 @@ const OnboardingScreen: React.FC<OnboardingScreenProps> = ({ user, onComplete })
       const remainingCals = calories - (protein * 4) - (fat * 9);
       const carbs = Math.max(50, Math.round(remainingCals / 4));
 
-      return { calories, protein, carbs, fat };
+      return { calories, protein, carbs, fat, water: Math.round(weight * 35) };
   };
 
   const nextStep = () => {
@@ -75,38 +72,29 @@ const OnboardingScreen: React.FC<OnboardingScreenProps> = ({ user, onComplete })
   const prevStep = () => setStep(step - 1);
   const handleSubmit = () => onComplete(formData);
 
-  // Helper component for Selectable Cards
-  const SelectCard = ({ selected, onClick, label, icon, subLabel }: any) => (
+  const SelectCard = ({ selected, onClick, label, icon }: any) => (
     <button
         onClick={onClick}
-        className={`w-full p-4 rounded-3xl border text-left transition-all duration-300 active:scale-[0.98] ${
+        className={`w-full p-6 rounded-[2rem] border text-left transition-all duration-300 active:scale-[0.98] ${
             selected 
-            ? 'bg-emerald-500/10 border-emerald-500 ring-1 ring-emerald-500/50' 
-            : 'bg-zinc-900 border-zinc-800 hover:border-zinc-700'
+            ? 'bg-emerald-500 text-black border-emerald-500 shadow-lg shadow-emerald-500/20' 
+            : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700'
         }`}
     >
-        <div className="flex items-center gap-4">
-            <div className={`w-12 h-12 rounded-full flex items-center justify-center transition-colors ${selected ? 'bg-emerald-500 text-black' : 'bg-zinc-800 text-zinc-400'}`}>
-                {icon}
-            </div>
-            <div>
-                <p className={`font-bold text-lg ${selected ? 'text-white' : 'text-zinc-200'}`}>{label}</p>
-                {subLabel && <p className="text-xs text-zinc-500 mt-0.5">{subLabel}</p>}
-            </div>
-             <div className={`ml-auto w-6 h-6 rounded-full border-2 flex items-center justify-center ${selected ? 'border-emerald-500 bg-emerald-500' : 'border-zinc-700'}`}>
-                {selected && <div className="w-2.5 h-2.5 bg-black rounded-full" />}
-            </div>
+        <div className="flex items-center justify-between">
+            <p className="font-bold text-lg">{label}</p>
+            <div className="text-2xl">{icon}</div>
         </div>
     </button>
   );
 
   return (
-    <div className="min-h-screen flex flex-col p-6 text-white pb-10">
+    <div className="min-h-screen flex flex-col p-6 text-white pb-10 bg-zinc-950">
       
       {/* Header / Progress */}
       <div className="flex items-center justify-between mt-4 mb-8">
           {step > 1 ? (
-               <button onClick={prevStep} className="w-10 h-10 rounded-full bg-zinc-900 flex items-center justify-center text-zinc-400 active:scale-95 transition-transform">
+               <button onClick={prevStep} className="w-10 h-10 rounded-full bg-zinc-900 flex items-center justify-center text-zinc-400 active:scale-95 transition-transform border border-zinc-800">
                   <ChevronLeftIcon className="w-5 h-5" />
                </button>
           ) : (
@@ -125,41 +113,41 @@ const OnboardingScreen: React.FC<OnboardingScreenProps> = ({ user, onComplete })
         {step === 1 && (
             <div className="space-y-6">
                 <div className="text-center mb-8">
-                    <h2 className="text-3xl font-extrabold mb-3 tracking-tight">Sobre Você</h2>
-                    <p className="text-zinc-400 leading-relaxed">Precisamos de alguns dados para calibrar o algoritmo para o seu corpo.</p>
+                    <h2 className="text-3xl font-black mb-2 tracking-tight">Sobre Você</h2>
+                    <p className="text-zinc-500">Dados para calibrar o algoritmo.</p>
                 </div>
 
                 <div className="grid grid-cols-2 gap-4">
-                     <div className="bg-zinc-900 p-5 rounded-[2rem] border border-zinc-800 focus-within:border-emerald-500 focus-within:ring-1 focus-within:ring-emerald-500/50 transition-all">
-                        <label className="text-xs text-zinc-500 font-bold uppercase tracking-wider block mb-2">Peso (kg)</label>
+                     <div className="bg-zinc-900 p-5 rounded-[2rem] border border-zinc-800 focus-within:border-emerald-500 transition-all">
+                        <label className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider block mb-2">Peso (kg)</label>
                         <input 
                             type="number" 
                             value={formData.weight}
                             onChange={(e) => handleChange('weight', parseFloat(e.target.value))}
-                            className="w-full bg-transparent text-4xl font-extrabold text-white focus:outline-none"
+                            className="w-full bg-transparent text-4xl font-black text-white focus:outline-none"
                             placeholder="0"
                             autoFocus
                         />
                     </div>
-                    <div className="bg-zinc-900 p-5 rounded-[2rem] border border-zinc-800 focus-within:border-emerald-500 focus-within:ring-1 focus-within:ring-emerald-500/50 transition-all">
-                        <label className="text-xs text-zinc-500 font-bold uppercase tracking-wider block mb-2">Altura (cm)</label>
+                    <div className="bg-zinc-900 p-5 rounded-[2rem] border border-zinc-800 focus-within:border-emerald-500 transition-all">
+                        <label className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider block mb-2">Altura (cm)</label>
                         <input 
                             type="number" 
                             value={formData.height}
                             onChange={(e) => handleChange('height', parseFloat(e.target.value))}
-                            className="w-full bg-transparent text-4xl font-extrabold text-white focus:outline-none"
+                            className="w-full bg-transparent text-4xl font-black text-white focus:outline-none"
                             placeholder="0"
                         />
                     </div>
                 </div>
 
-                <div className="bg-zinc-900 p-5 rounded-[2rem] border border-zinc-800 focus-within:border-emerald-500 focus-within:ring-1 focus-within:ring-emerald-500/50 transition-all">
-                    <label className="text-xs text-zinc-500 font-bold uppercase tracking-wider block mb-2">Idade</label>
+                <div className="bg-zinc-900 p-5 rounded-[2rem] border border-zinc-800 focus-within:border-emerald-500 transition-all">
+                    <label className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider block mb-2">Idade</label>
                     <input 
                         type="number" 
                         value={formData.age}
                         onChange={(e) => handleChange('age', parseFloat(e.target.value))}
-                        className="w-full bg-transparent text-4xl font-extrabold text-white focus:outline-none"
+                        className="w-full bg-transparent text-4xl font-black text-white focus:outline-none"
                         placeholder="0"
                     />
                 </div>
@@ -167,7 +155,7 @@ const OnboardingScreen: React.FC<OnboardingScreenProps> = ({ user, onComplete })
                 <div className="grid grid-cols-2 gap-3">
                     <button
                         onClick={() => handleChange('gender', 'male')}
-                        className={`p-5 rounded-3xl border font-bold text-lg transition-all active:scale-[0.98] ${
+                        className={`p-5 rounded-[2rem] border font-bold text-lg transition-all active:scale-[0.98] ${
                             formData.gender === 'male' 
                             ? 'bg-emerald-500 text-black border-emerald-500' 
                             : 'bg-zinc-900 text-zinc-500 border-zinc-800'
@@ -177,7 +165,7 @@ const OnboardingScreen: React.FC<OnboardingScreenProps> = ({ user, onComplete })
                     </button>
                     <button
                         onClick={() => handleChange('gender', 'female')}
-                        className={`p-5 rounded-3xl border font-bold text-lg transition-all active:scale-[0.98] ${
+                        className={`p-5 rounded-[2rem] border font-bold text-lg transition-all active:scale-[0.98] ${
                             formData.gender === 'female' 
                             ? 'bg-emerald-500 text-black border-emerald-500' 
                             : 'bg-zinc-900 text-zinc-500 border-zinc-800'
@@ -192,51 +180,29 @@ const OnboardingScreen: React.FC<OnboardingScreenProps> = ({ user, onComplete })
         {step === 2 && (
             <div className="space-y-6">
                 <div className="text-center mb-6">
-                    <h2 className="text-3xl font-extrabold mb-3 tracking-tight">Seu Objetivo</h2>
-                    <p className="text-zinc-400">Isso definirá sua estratégia de treino e nutrição.</p>
+                    <h2 className="text-3xl font-black mb-2 tracking-tight">Objetivo Principal</h2>
+                    <p className="text-zinc-500">O que você deseja alcançar?</p>
                 </div>
 
                 <div className="space-y-3">
                     <SelectCard 
-                        selected={formData.workoutGoal === 'hypertrophy'}
-                        onClick={() => handleChange('workoutGoal', 'hypertrophy')}
+                        selected={formData.weightGoal === 'lose_weight'}
+                        onClick={() => handleChange('weightGoal', 'lose_weight')}
+                        label="Perder Peso"
+                        icon="🔥"
+                    />
+                    <SelectCard 
+                        selected={formData.weightGoal === 'maintain'}
+                        onClick={() => handleChange('weightGoal', 'maintain')}
+                        label="Manter Peso"
+                        icon="⚖️"
+                    />
+                    <SelectCard 
+                        selected={formData.weightGoal === 'gain_muscle'}
+                        onClick={() => handleChange('weightGoal', 'gain_muscle')}
                         label="Ganhar Massa"
-                        subLabel="Foco em hipertrofia e volume"
-                        icon={<DumbbellIcon className="w-6 h-6" />}
+                        icon="💪"
                     />
-                    <SelectCard 
-                        selected={formData.workoutGoal === 'weight_loss'}
-                        onClick={() => handleChange('workoutGoal', 'weight_loss')}
-                        label="Perder Gordura"
-                        subLabel="Déficit calórico e definição"
-                        icon={<FireIcon className="w-6 h-6" />}
-                    />
-                    <SelectCard 
-                        selected={formData.workoutGoal === 'strength'}
-                        onClick={() => handleChange('workoutGoal', 'strength')}
-                        label="Ganhar Força"
-                        subLabel="Foco em cargas e progressão"
-                        icon={<ChartBarIcon className="w-6 h-6" />}
-                    />
-                </div>
-
-                <div className="pt-4">
-                     <label className="text-xs text-zinc-500 font-bold uppercase tracking-wider block mb-3 ml-2">Nível de Experiência</label>
-                     <div className="grid grid-cols-3 gap-2">
-                        {['beginner', 'intermediate', 'advanced'].map((level) => (
-                            <button
-                                key={level}
-                                onClick={() => handleChange('experienceLevel', level)}
-                                className={`p-3 rounded-2xl border text-sm font-bold capitalize transition-all active:scale-95 ${
-                                    formData.experienceLevel === level
-                                    ? 'bg-white text-black border-white'
-                                    : 'bg-zinc-900 text-zinc-500 border-zinc-800'
-                                }`}
-                            >
-                                {level === 'beginner' ? 'Iniciante' : level === 'intermediate' ? 'Interm.' : 'Avançado'}
-                            </button>
-                        ))}
-                     </div>
                 </div>
             </div>
         )}
@@ -244,42 +210,39 @@ const OnboardingScreen: React.FC<OnboardingScreenProps> = ({ user, onComplete })
         {step === 3 && (
             <div className="space-y-6">
                  <div className="text-center mb-2">
-                    <h2 className="text-3xl font-extrabold mb-3 tracking-tight">Plano Gerado</h2>
-                    <p className="text-zinc-400">Sua meta nutricional diária sugerida.</p>
+                    <h2 className="text-3xl font-black mb-2 tracking-tight">Sua Meta Diária</h2>
+                    <p className="text-zinc-500">Calculada para o seu perfil.</p>
                 </div>
 
-                <div className="bg-gradient-to-br from-zinc-800 to-zinc-900 p-8 rounded-[2.5rem] border border-zinc-700/50 flex flex-col items-center justify-center text-center shadow-2xl relative overflow-hidden">
-                    <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-emerald-500 to-teal-500"></div>
-                    <div className="w-20 h-20 rounded-full bg-zinc-950 flex items-center justify-center mb-4 border border-zinc-800 shadow-inner">
-                        <FireIcon className="w-8 h-8 text-emerald-500" />
+                <div className="bg-zinc-900 p-8 rounded-[2.5rem] border border-zinc-800 flex flex-col items-center justify-center text-center shadow-2xl">
+                    <div className="w-16 h-16 rounded-full bg-emerald-500/10 flex items-center justify-center mb-4 border border-emerald-500/20 text-emerald-500">
+                        <FireIcon className="w-8 h-8" />
                     </div>
-                    <label className="text-emerald-500 font-bold text-xs uppercase tracking-widest mb-2">Meta Calórica</label>
+                    <label className="text-zinc-500 font-bold text-[10px] uppercase tracking-widest mb-2">Calorias Recomendadas</label>
                     <div className="flex items-baseline gap-1 relative z-10">
                         <input 
                             type="number"
                             value={formData.goals?.calories}
                             onChange={(e) => handleGoalChange('calories', e.target.value)}
-                            className="bg-transparent text-6xl font-black text-white text-center w-48 focus:outline-none border-b border-transparent focus:border-zinc-700"
+                            className="bg-transparent text-6xl font-black text-white text-center w-48 focus:outline-none"
                         />
                         <span className="text-zinc-500 font-bold text-lg">kcal</span>
                     </div>
                 </div>
 
                 <div className="space-y-3">
-                    <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest ml-2">Macronutrientes</h3>
+                    <h3 className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest ml-2">Distribuição</h3>
                     
                     {/* Macro Cards */}
                     {[
-                        { key: 'protein', label: 'Proteína', icon: '🥩', color: 'amber' },
-                        { key: 'carbs', label: 'Carbo', icon: '🍚', color: 'emerald' },
-                        { key: 'fat', label: 'Gordura', icon: '🥑', color: 'blue' }
+                        { key: 'protein', label: 'Proteína', icon: '🥩' },
+                        { key: 'carbs', label: 'Carbo', icon: '🍚' },
+                        { key: 'fat', label: 'Gordura', icon: '🥑' }
                     ].map((macro) => (
-                         <div key={macro.key} className="bg-zinc-900/80 p-4 rounded-3xl border border-zinc-800/50 flex justify-between items-center backdrop-blur-sm">
+                         <div key={macro.key} className="bg-zinc-900/50 p-4 rounded-2xl border border-zinc-800 flex justify-between items-center">
                             <div className="flex items-center gap-4">
-                                <span className="text-2xl">{macro.icon}</span>
-                                <div>
-                                    <span className="font-bold text-white block">{macro.label}</span>
-                                </div>
+                                <span className="text-xl">{macro.icon}</span>
+                                <span className="font-bold text-zinc-300">{macro.label}</span>
                             </div>
                             <div className="flex items-baseline gap-1">
                                 <input 
@@ -300,9 +263,9 @@ const OnboardingScreen: React.FC<OnboardingScreenProps> = ({ user, onComplete })
         
         <button 
             onClick={step === 3 ? handleSubmit : nextStep}
-            className="w-full bg-white text-black font-extrabold text-lg py-5 rounded-[2rem] shadow-xl shadow-white/10 active:scale-[0.98] transition-all mt-8 mb-4 hover:bg-zinc-100"
+            className="w-full bg-white text-black font-extrabold text-lg py-5 rounded-full shadow-xl shadow-white/10 active:scale-[0.98] transition-all mt-8 mb-4 hover:bg-zinc-200"
         >
-            {step === 3 ? 'Finalizar e Começar' : 'Continuar'}
+            {step === 3 ? 'Finalizar' : 'Continuar'}
         </button>
       </div>
     </div>
